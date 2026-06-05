@@ -47,7 +47,7 @@ jobs:
           # Use a PAT or GitHub App token when repository settings block
           # GitHub Actions from creating pull requests with GITHUB_TOKEN.
           GITHUB_TOKEN: ${{ secrets.CHANGESETS_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
-          # Either configure npm Trusted Publishing for this workflow, or add
-          # an npm automation token as NPM_TOKEN in repository secrets.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Publishing uses npm Trusted Publishing via GitHub OIDC.
+          # Configure npm package trusted publisher for:
+          # owner: joshmkennedy, repo: local-blob, workflow: release.yml
           NPM_CONFIG_PROVENANCE: true
