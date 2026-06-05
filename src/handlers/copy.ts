@@ -3,9 +3,13 @@ import path from 'node:path';
 import {
   blobUrl,
   defineHandler,
+  fileExists,
   normalizeBlobPathname,
   pathnameFromRequest,
+  readJsonFile,
   storeFilePath,
+  storeMetaPath,
+  writeText,
 } from './common.ts';
 
 export default defineHandler({
@@ -16,10 +20,10 @@ export default defineHandler({
   async handle (url: URL, request) {
     const fromPath = normalizeBlobPathname(url.searchParams.get('fromUrl'));
     const toPath = pathnameFromRequest(url);
-    const metaFile = Bun.file(`${storeFilePath(fromPath)}._vercel_mock_meta_`);
-    const file = Bun.file(storeFilePath(fromPath));
-    if (await metaFile.exists() && await file.exists()) {
-      const meta = await metaFile.json();
+    const metaFile = storeMetaPath(fromPath);
+    const file = storeFilePath(fromPath);
+    if (await fileExists(metaFile) && await fileExists(file)) {
+      const meta = await readJsonFile(metaFile);
       meta.url = blobUrl(url.origin, toPath);
       const downloadUrl = new URL(meta.url);
       downloadUrl.searchParams.set('download', '1');
@@ -28,7 +32,7 @@ export default defineHandler({
       meta.uploadedAt = new Date();
       const destinationPath = storeFilePath(toPath);
       await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-      await Bun.write(`${destinationPath}._vercel_mock_meta_`, JSON.stringify(meta, undefined, 2));
+      await writeText(storeMetaPath(toPath), JSON.stringify(meta, undefined, 2));
       await fs.cp(storeFilePath(fromPath), destinationPath);
 
       return Response.json(meta);

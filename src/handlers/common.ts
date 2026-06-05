@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { createHmac } from 'node:crypto';
 
 export const storePath = process.env.VERCEL_STORE_PATH ?? '.store';
@@ -110,12 +111,32 @@ export function createBlobMetadata({
   };
 }
 
+export async function writeBlob(filePath: string, blob: Blob) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, Buffer.from(await blob.arrayBuffer()));
+}
+
+export async function writeText(filePath: string, value: string) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, value);
+}
+
+export async function fileExists(filePath: string) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function readJsonFile(filePath: string) {
+  return JSON.parse(await fs.readFile(filePath, 'utf8'));
+}
+
 export async function persistBlob(pathname: string, blob: Blob, metadata: any) {
-  const filePath = storeFilePath(pathname);
-  await Bun.write(filePath, blob, { createPath: true });
-  await Bun.write(storeMetaPath(pathname), JSON.stringify(metadata, undefined, 2), {
-    createPath: true,
-  });
+  await writeBlob(storeFilePath(pathname), blob);
+  await writeText(storeMetaPath(pathname), JSON.stringify(metadata, undefined, 2));
 }
 
 export function putResultFromMetadata(metadata: any) {

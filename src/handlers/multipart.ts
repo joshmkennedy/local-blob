@@ -8,6 +8,8 @@ import {
   persistBlob,
   putResultFromMetadata,
   storePath,
+  writeBlob,
+  writeText,
 } from './common.ts';
 
 const MPU_DIR = '.mpu';
@@ -25,10 +27,7 @@ export default defineHandler({
       const uploadId = `local-mpu-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const key = pathname;
       await fs.mkdir(uploadPath(uploadId), { recursive: true });
-      await Bun.write(
-        path.join(uploadPath(uploadId), 'meta.json'),
-        JSON.stringify({ pathname, key }, null, 2)
-      );
+      await writeText(path.join(uploadPath(uploadId), 'meta.json'), JSON.stringify({ pathname, key }, null, 2));
 
       return Response.json({ key, uploadId });
     }
@@ -39,7 +38,7 @@ export default defineHandler({
       const blob = await request.blob();
       const partPath = path.join(uploadPath(uploadId), `${partNumber}.part`);
 
-      await Bun.write(partPath, blob, { createPath: true });
+      await writeBlob(partPath, blob);
 
       return Response.json({
         etag: `"local-mpu-${uploadId}-${partNumber}-${blob.size}"`,
@@ -53,10 +52,7 @@ export default defineHandler({
       const parts: Array<{ partNumber: number }> = await request.json();
       const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
       const partBlobs = await Promise.all(
-        sortedParts.map(async (part) => {
-          const file = Bun.file(path.join(uploadPath(uploadId), `${part.partNumber}.part`));
-          return new Uint8Array(await file.arrayBuffer());
-        })
+        sortedParts.map((part) => fs.readFile(path.join(uploadPath(uploadId), `${part.partNumber}.part`)))
       );
       const blob = new Blob(partBlobs, {
         type: request.headers.get('X-Content-Type') || 'application/octet-stream',

@@ -1,28 +1,5 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
-const bunCheck = spawnSync('bun', ['--version'], { stdio: 'ignore' });
-
-if (bunCheck.error) {
-  console.error('local-blob currently requires Bun to run.');
-  console.error('Install Bun from https://bun.sh, then run this command again.');
-  process.exit(1);
-}
-
-const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const serverPath = resolve(packageRoot, 'src/server.ts');
-const result = spawnSync('bun', [serverPath, ...process.argv.slice(2)], {
-  cwd: packageRoot,
-  stdio: 'inherit',
-  env: process.env,
-});
-
-if (result.error) {
-  console.error(result.error.message);
-  process.exit(1);
-}
-
-process.exit(result.status ?? 0);
+createRequire(import.meta.url)('../dist/server.cjs');

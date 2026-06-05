@@ -1,10 +1,9 @@
-FROM oven/bun:1 AS base
+FROM node:20-alpine
 
-RUN mkdir /app
-
+WORKDIR /app
 ENV VERCEL_STORE_PATH=/var/vercel-blob-store
 
-COPY ./dist/server.js /app
+COPY ./dist/server.cjs /app/server.cjs
 
 EXPOSE 3000
-CMD [ "bun", "/app/server.js" ]
+CMD ["node", "/app/server.cjs"]

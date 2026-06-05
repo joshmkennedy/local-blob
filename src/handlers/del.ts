@@ -1,5 +1,5 @@
 import { unlink } from 'node:fs/promises';
-import { defineHandler, normalizeBlobPathname, storeFilePath } from './common.ts';
+import { defineHandler, fileExists, normalizeBlobPathname, storeFilePath, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'del',
@@ -17,15 +17,12 @@ export default defineHandler({
       for (let url of urlsArray) {
         const pathname = normalizeBlobPathname(url);
         const fileUrl = storeFilePath(pathname);
-        const metaFileUrl = `${fileUrl}._vercel_mock_meta_`;
+        const metaFileUrl = storeMetaPath(pathname);
 
-        const file = Bun.file(fileUrl);
-        const metaFile = Bun.file(metaFileUrl);
-
-        if (await file.exists()) {
+        if (await fileExists(fileUrl)) {
           await unlink(fileUrl);
         }
-        if (await metaFile.exists()) {
+        if (await fileExists(metaFileUrl)) {
           await unlink(metaFileUrl);
         }
       }

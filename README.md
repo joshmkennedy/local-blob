@@ -2,7 +2,7 @@
 
 Local development emulator for the Vercel Blob API.
 
-This project was extracted from the APSCA prototype so it can grow into a standalone `npx local-blob` package.
+This package runs on Node.js only. No Bun runtime is required.
 
 ## Current status
 
@@ -28,9 +28,7 @@ Known gaps:
 - private/signed read URLs
 - full provider error and policy enforcement
 
-## Run locally
-
-This CLI is packaged like a normal npm executable: `package.json` exposes a `bin/local-blob` entry with a Node shebang. The wrapper checks for Bun, then starts the TypeScript server with Bun. A future milestone is removing the Bun runtime requirement or shipping a compiled Node server.
+## Run
 
 From npm once published:
 
@@ -38,45 +36,48 @@ From npm once published:
 npx local-blob
 ```
 
-From a local checkout:
-
-```shell
-bun install
-bun run serve:local
-```
-
-`npx local-blob` and `serve:local` use:
+The CLI defaults to:
 
 ```dotenv
-PORT=3000 by default, or set PORT yourself
-VERCEL_STORE_PATH=.store by default, or set VERCEL_STORE_PATH yourself
-BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce
-VERCEL_BLOB_API_URL=http://localhost:<PORT>
+PORT=3000
+VERCEL_STORE_PATH=.store
 ```
 
 In the app you are testing, set:
 
 ```dotenv
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce
-VERCEL_BLOB_API_URL=http://localhost:9966
+VERCEL_BLOB_API_URL=http://localhost:3000
 ```
 
 Then use `@vercel/blob` as usual.
 
-## Demo workflow
-
-With the local server running:
+## Local development
 
 ```shell
-bun run demo
+npm install
+npm run build
+npm start
+```
+
+For a local server on port `9966` with a named store path:
+
+```shell
+npm run serve:local
+```
+
+## Demo workflow
+
+```shell
+npm run demo
 ```
 
 ## Docker
 
 ```shell
-bun install
-bun run build
-bun run build:docker
+npm install
+npm run build
+npm run build:docker
 ```
 
 Example compose service:
@@ -89,7 +90,3 @@ local-blob:
   volumes:
     - ./dev/local-blob-store:/var/vercel-blob-store
 ```
-
-## Publishing direction
-
-The package is intentionally not polished yet. The next milestone is making `npx local-blob` a simple zero-config dev server with documented flags for port, store path, and token.

@@ -8,30 +8,30 @@
   },
   "files": [
     "bin",
-    "src",
+    "dist",
     "README.md",
     "Dockerfile"
   ],
   "scripts": {
-    "start": "bun src/server.ts",
-    "build": "bun src/build.ts",
-    "dev": "bun src/server.ts",
-    "demo": "bun scripts/prove-blob-workflow.ts",
-    "serve:local": "PORT=9966 VERCEL_STORE_PATH=.local-blob-store BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce VERCEL_BLOB_API_URL=http://localhost:9966 bun src/server.ts",
+    "start": "node dist/server.cjs",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/server.cjs",
+    "dev": "tsx src/server.ts",
+    "demo": "npm run build && tsx scripts/prove-blob-workflow.ts",
+    "serve:local": "PORT=9966 VERCEL_STORE_PATH=.local-blob-store BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce VERCEL_BLOB_API_URL=http://localhost:9966 node dist/server.cjs",
     "build:docker": "docker build . --tag local-blob",
-    "test": "bun test"
+    "test": "npm run build && node --test"
   },
   "keywords": ["vercel", "blob", "local", "emulator"],
   "author": "",
   "license": "ISC",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@vercel/blob": "^2.4.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
+    "@types/node": "^24.0.0",
+    "@vercel/blob": "^2.4.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
   }
 }

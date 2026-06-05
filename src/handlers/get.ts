@@ -1,4 +1,5 @@
-import { defineHandler, normalizeBlobPathname, storeFilePath } from './common.ts';
+import fs from 'node:fs/promises';
+import { defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeFilePath, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'get',
@@ -8,10 +9,10 @@ export default defineHandler({
   async handle (url, request) {
     const isDownload = url.searchParams.get('download') === '1';
     const pathname = normalizeBlobPathname(url.pathname);
-    const metaFile = Bun.file(`${storeFilePath(pathname)}._vercel_mock_meta_`);
-    const file = Bun.file(storeFilePath(pathname));
-    if (await metaFile.exists() && await file.exists()) {
-      const data = await metaFile.json();
+    const metaFile = storeMetaPath(pathname);
+    const file = storeFilePath(pathname);
+    if (await fileExists(metaFile) && await fileExists(file)) {
+      const data = await readJsonFile(metaFile);
       const headers = new Headers({
         'Content-Type': data.contentType,
         'Content-Length': String(data.size),
@@ -21,7 +22,7 @@ export default defineHandler({
       if (isDownload) {
         headers.set('Content-Disposition', data.contentDisposition);
       }
-      return new Response(file, { headers });
+      return new Response(await fs.readFile(file), { headers });
     } else {
       return new Response(null, { status: 404 });
     }
