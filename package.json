@@ -1,0 +1,37 @@
+{
+  "name": "local-blob",
+  "version": "0.1.0",
+  "description": "Local development emulator for the Vercel Blob API.",
+  "type": "module",
+  "bin": {
+    "local-blob": "bin/local-blob"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "Dockerfile"
+  ],
+  "scripts": {
+    "start": "bun src/server.ts",
+    "build": "bun src/build.ts",
+    "dev": "bun src/server.ts",
+    "demo": "bun scripts/prove-blob-workflow.ts",
+    "serve:local": "PORT=9966 VERCEL_STORE_PATH=.local-blob-store BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce VERCEL_BLOB_API_URL=http://localhost:9966 bun src/server.ts",
+    "build:docker": "docker build . --tag local-blob",
+    "test": "bun test"
+  },
+  "keywords": ["vercel", "blob", "local", "emulator"],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@vercel/blob": "^2.4.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
