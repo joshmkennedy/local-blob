@@ -9,16 +9,14 @@
   "files": [
     "bin",
     "dist",
-    "README.md",
-    "Dockerfile"
+    "README.md"
   ],
   "scripts": {
     "start": "node dist/server.cjs",
     "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/server.cjs",
     "dev": "tsx src/server.ts",
     "demo": "npm run build && tsx scripts/prove-blob-workflow.ts",
-    "serve:local": "PORT=9966 VERCEL_STORE_PATH=.local-blob-store BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce VERCEL_BLOB_API_URL=http://localhost:9966 node dist/server.cjs",
-    "build:docker": "docker build . --tag local-blob",
+    "serve:local": "node dist/server.cjs --port 9966 --store .local-blob-store --token vercel_blob_rw_localstore_nonce",
     "test": "npm run build && node --test"
   },
   "keywords": ["vercel", "blob", "local", "emulator"],

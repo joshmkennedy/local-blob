@@ -2,7 +2,7 @@
 
 Local development emulator for the Vercel Blob API.
 
-This package runs on Node.js only. No Bun runtime is required.
+This package runs on Node.js only. No Bun or Docker runtime is required.
 
 ## Current status
 
@@ -36,14 +36,22 @@ From npm once published:
 npx local-blob
 ```
 
-The CLI defaults to:
+With options:
 
-```dotenv
-PORT=3000
-VERCEL_STORE_PATH=.store
+```shell
+npx local-blob --port 9966 --store .local-blob-store
 ```
 
-In the app you are testing, set:
+Options:
+
+```text
+-p, --port <port>    Port to listen on. Defaults to PORT or 3000.
+-s, --store <path>   Blob store directory. Defaults to VERCEL_STORE_PATH or .store.
+-t, --token <token>  Read/write token. Defaults to BLOB_READ_WRITE_TOKEN or vercel_blob_rw_localstore_nonce.
+-h, --help           Show help.
+```
+
+On startup, `local-blob` prints the environment variables to add to your app, for example:
 
 ```dotenv
 BLOB_READ_WRITE_TOKEN=vercel_blob_rw_localstore_nonce
@@ -70,23 +78,4 @@ npm run serve:local
 
 ```shell
 npm run demo
-```
-
-## Docker
-
-```shell
-npm install
-npm run build
-npm run build:docker
-```
-
-Example compose service:
-
-```yaml
-local-blob:
-  ports:
-    - '9966:3000'
-  image: local-blob
-  volumes:
-    - ./dev/local-blob-store:/var/vercel-blob-store
 ```
