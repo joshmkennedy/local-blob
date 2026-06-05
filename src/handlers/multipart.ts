@@ -1,13 +1,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  applyRandomSuffix,
+  blobErrorResponse,
   createBlobMetadata,
   defineHandler,
+  fileExists,
   notifyClientUploadCompleted,
   pathnameFromRequest,
   persistBlob,
   putResultFromMetadata,
+  readJsonFile,
+  storeMetaPath,
   storePath,
+  validateIfMatch,
   writeBlob,
   writeText,
 } from './common.ts';
@@ -23,11 +29,12 @@ export default defineHandler({
     const action = request.headers.get('x-mpu-action');
 
     if (action === 'create') {
-      const pathname = pathnameFromRequest(url);
+      const requestedPathname = pathnameFromRequest(url);
+      const pathname = applyRandomSuffix(requestedPathname, request.headers);
       const uploadId = `local-mpu-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const key = pathname;
       await fs.mkdir(uploadPath(uploadId), { recursive: true });
-      await writeText(path.join(uploadPath(uploadId), 'meta.json'), JSON.stringify({ pathname, key }, null, 2));
+      await writeText(path.join(uploadPath(uploadId), 'meta.json'), JSON.stringify({ requestedPathname, pathname, key }, null, 2));
 
       return Response.json({ key, uploadId });
     }
@@ -48,7 +55,19 @@ export default defineHandler({
 
     if (action === 'complete') {
       const uploadId = requireHeader(request, 'x-mpu-upload-id');
-      const pathname = pathnameFromRequest(url);
+      const uploadMetadata = await readJsonFile(path.join(uploadPath(uploadId), 'meta.json'));
+      const pathname = uploadMetadata.pathname;
+      const ifMatchFailure = await validateIfMatch(pathname, request);
+      if (ifMatchFailure) return ifMatchFailure;
+
+      if (!request.headers.has('x-if-match') && request.headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(pathname))) {
+        return blobErrorResponse(
+          412,
+          'Blob already exists. Pass allowOverwrite: true to overwrite it.',
+          'precondition_failed'
+        );
+      }
+
       const parts: Array<{ partNumber: number }> = await request.json();
       const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
       const partBlobs = await Promise.all(
@@ -73,7 +92,7 @@ export default defineHandler({
       return Response.json(result);
     }
 
-    return Response.json({ error: `Unsupported multipart action: ${action}` }, { status: 400 });
+    return blobErrorResponse(400, `Unsupported multipart action: ${action}`);
   },
 });
 

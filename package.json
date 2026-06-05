@@ -1,5 +1,5 @@
 {
-  "name": "local-blob",
+  "name": "local-blobtastic",
   "version": "0.1.0",
   "description": "Local development emulator for the Vercel Blob API.",
   "type": "module",
@@ -17,15 +17,24 @@
     "dev": "tsx src/server.ts",
     "demo": "npm run build && tsx scripts/prove-blob-workflow.ts",
     "serve:local": "node dist/server.cjs --port 9966 --store .local-blob-store --token vercel_blob_rw_localstore_nonce",
-    "test": "npm run build && node --test"
+    "test": "npm run build && node --test",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
-  "keywords": ["vercel", "blob", "local", "emulator"],
+  "keywords": [
+    "vercel",
+    "blob",
+    "local",
+    "emulator"
+  ],
   "author": "",
   "license": "ISC",
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^24.0.0",
     "@vercel/blob": "^2.4.0",
     "esbuild": "^0.25.0",

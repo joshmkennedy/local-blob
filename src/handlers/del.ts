@@ -1,5 +1,5 @@
 import { unlink } from 'node:fs/promises';
-import { defineHandler, fileExists, normalizeBlobPathname, storeFilePath, storeMetaPath } from './common.ts';
+import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, storeFilePath, storeMetaPath, validateIfMatch } from './common.ts';
 
 export default defineHandler({
   name: 'del',
@@ -12,6 +12,15 @@ export default defineHandler({
     const body: { urls: string[] } = await request.json();
 
     const urlsArray = body.urls;
+
+    if (request.headers.has('x-if-match')) {
+      if (urlsArray.length !== 1) {
+        return blobErrorResponse(400, 'ifMatch can only be used when deleting a single URL.');
+      }
+
+      const ifMatchFailure = await validateIfMatch(normalizeBlobPathname(urlsArray[0]), request);
+      if (ifMatchFailure) return ifMatchFailure;
+    }
 
     if (urlsArray.length) {
       for (let url of urlsArray) {

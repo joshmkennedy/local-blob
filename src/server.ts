@@ -2,7 +2,7 @@
 
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import type { Handler } from './handlers/common.ts';
+import { HttpError, blobErrorResponse, type Handler } from './handlers/common.ts';
 
 type CliOptions = {
   port: number;
@@ -55,6 +55,14 @@ async function main() {
         duplex: 'half',
       } as RequestInit);
 
+      if (isPresignedUrlRequest(url)) {
+        await sendResponse(outgoing, blobErrorResponse(
+          400,
+          'Presigned URL flows are not supported by local-blob. Use read/write tokens or client-token uploads for local development.'
+        ));
+        return;
+      }
+
       for (const handler of handlers) {
         if (handler.test(url, request)) {
           await sendResponse(outgoing, await handler.handle(url, request));
@@ -62,11 +70,16 @@ async function main() {
         }
       }
 
-      await sendResponse(outgoing, Response.json(null, { status: 404 }));
+      await sendResponse(outgoing, blobErrorResponse(404));
     } catch (e) {
       console.error(e);
+      if (e instanceof HttpError) {
+        await sendResponse(outgoing, blobErrorResponse(e.status, e.message, e.code));
+        return;
+      }
+
       const status = Number.isInteger((e as any)?.status) ? (e as any).status : 500;
-      await sendResponse(outgoing, new Response(String((e as any)?.message ?? e), { status }));
+      await sendResponse(outgoing, blobErrorResponse(status, String((e as any)?.message ?? e)));
     }
   });
 
@@ -78,6 +91,10 @@ async function main() {
     console.log(`BLOB_READ_WRITE_TOKEN=${options.token}`);
     console.log(`VERCEL_BLOB_API_URL=http://localhost:${options.port}`);
   });
+}
+
+function isPresignedUrlRequest(url: URL) {
+  return url.searchParams.has('vercel-blob-delegation') || url.searchParams.has('vercel-blob-signature');
 }
 
 async function sendResponse(outgoing: http.ServerResponse, response: Response) {

@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeFilePath, storeMetaPath } from './common.ts';
+import { blobErrorResponse, contentDispositionForPathname, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeFilePath, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'get',
@@ -18,13 +18,13 @@ export default defineHandler({
         'Content-Length': String(data.size),
         'Cache-Control': data.cacheControl,
         'Last-Modified': String(new Date(data.uploadedAt)),
+        'Content-Disposition': isDownload
+          ? contentDispositionForPathname(data.pathname, 'attachment')
+          : data.contentDisposition,
       });
-      if (isDownload) {
-        headers.set('Content-Disposition', data.contentDisposition);
-      }
       return new Response(await fs.readFile(file), { headers });
     } else {
-      return new Response(null, { status: 404 });
+      return blobErrorResponse(404);
     }
   },
 });

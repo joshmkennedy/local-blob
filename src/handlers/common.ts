@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 export const storePath = process.env.VERCEL_STORE_PATH ?? '.store';
 const META_SUFFIX = '._vercel_mock_meta_';
@@ -14,12 +14,59 @@ export interface Handler {
   handle (url: URL, request: Request): Response | Promise<Response>;
 }
 
+export type BlobErrorCode =
+  | 'bad_request'
+  | 'not_found'
+  | 'precondition_failed'
+  | 'forbidden'
+  | 'unknown_error';
+
 export class HttpError extends Error {
   constructor(
     message: string,
-    public status = 500
+    public status = 500,
+    public code: BlobErrorCode = blobErrorCodeFromStatus(status)
   ) {
     super(message);
+  }
+}
+
+export function blobErrorResponse(
+  status: number,
+  message?: string,
+  code: BlobErrorCode = blobErrorCodeFromStatus(status)
+) {
+  return Response.json(
+    {
+      error: {
+        code,
+        message: message ?? defaultBlobErrorMessage(code),
+      },
+    },
+    { status }
+  );
+}
+
+export function blobErrorCodeFromStatus(status: number): BlobErrorCode {
+  if (status === 400 || status === 405) return 'bad_request';
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 412) return 'precondition_failed';
+  return 'unknown_error';
+}
+
+function defaultBlobErrorMessage(code: BlobErrorCode) {
+  switch (code) {
+    case 'bad_request':
+      return 'Bad request';
+    case 'not_found':
+      return 'The requested blob does not exist';
+    case 'precondition_failed':
+      return 'Precondition failed: ETag mismatch.';
+    case 'forbidden':
+      return 'Access denied, please provide a valid token for this resource.';
+    case 'unknown_error':
+      return 'Unknown error, please visit https://vercel.com/help.';
   }
 }
 
@@ -52,7 +99,11 @@ export function normalizeBlobPathname(value: string | null | undefined) {
     !normalized ||
     normalized.includes('\0') ||
     path.isAbsolute(normalized) ||
-    segments.some((segment) => segment === '' || segment === '.' || segment === '..')
+    segments.some((segment, index) =>
+      segment === '.' ||
+      segment === '..' ||
+      (segment === '' && index !== segments.length - 1)
+    )
   ) {
     throw new HttpError(`Invalid blob pathname: ${value}`, 400);
   }
@@ -62,6 +113,24 @@ export function normalizeBlobPathname(value: string | null | undefined) {
 
 export function pathnameFromRequest(url: URL) {
   return normalizeBlobPathname(url.searchParams.get('pathname') ?? url.pathname);
+}
+
+export function applyRandomSuffix(pathname: string, headers: Headers) {
+  const normalizedPathname = normalizeBlobPathname(pathname);
+  if (headers.get('x-add-random-suffix') !== '1') {
+    return normalizedPathname;
+  }
+
+  const slashIndex = normalizedPathname.lastIndexOf('/');
+  const directory = slashIndex === -1 ? '' : `${normalizedPathname.slice(0, slashIndex + 1)}`;
+  const filename = slashIndex === -1 ? normalizedPathname : normalizedPathname.slice(slashIndex + 1);
+  const dotIndex = filename.lastIndexOf('.');
+  const hasExtension = dotIndex > 0;
+  const stem = hasExtension ? filename.slice(0, dotIndex) : filename;
+  const extension = hasExtension ? filename.slice(dotIndex) : '';
+  const suffix = randomBytes(8).toString('base64url');
+
+  return `${directory}${stem}-${suffix}${extension}`;
 }
 
 export function storeFilePath(pathname: string) {
@@ -88,7 +157,8 @@ export function createBlobMetadata({
   headers: Headers;
 }) {
   const uploadedAt = new Date();
-  const urlString = blobUrl(origin, pathname);
+  const normalizedPathname = normalizeBlobPathname(pathname);
+  const urlString = blobUrl(origin, normalizedPathname);
   const downloadUrl = new URL(urlString);
   downloadUrl.searchParams.set('download', '1');
   const cacheControlRaw = headers.get('x-cache-control-max-age');
@@ -96,7 +166,7 @@ export function createBlobMetadata({
   return {
     url: urlString,
     downloadUrl: downloadUrl.toString(),
-    pathname: normalizeBlobPathname(pathname),
+    pathname: normalizedPathname,
     size: blob.size,
     contentType:
       headers.get('X-Content-Type') ||
@@ -105,10 +175,19 @@ export function createBlobMetadata({
     cacheControl: cacheControlRaw
       ? `max-age=${cacheControlRaw}`
       : 'max-age=31536000',
+    access: headers.get('x-vercel-blob-access') || 'public',
     uploadedAt,
-    contentDisposition: headers.get('Content-Disposition') || 'attachment',
+    contentDisposition: headers.get('Content-Disposition') || contentDispositionForPathname(normalizedPathname, 'inline'),
     etag: `"local-${blob.size}-${uploadedAt.getTime()}"`,
   };
+}
+
+export function contentDispositionForPathname(pathname: string, disposition: 'inline' | 'attachment') {
+  const normalizedPathname = normalizeBlobPathname(pathname);
+  const filename = normalizedPathname.split('/').filter(Boolean).at(-1) || 'download';
+  const escapedFilename = filename.replace(/["\\]/g, '_');
+
+  return `${disposition}; filename="${escapedFilename}"`;
 }
 
 export async function writeBlob(filePath: string, blob: Blob) {
@@ -132,6 +211,23 @@ export async function fileExists(filePath: string) {
 
 export async function readJsonFile(filePath: string) {
   return JSON.parse(await fs.readFile(filePath, 'utf8'));
+}
+
+export async function validateIfMatch(pathname: string, request: Request) {
+  const ifMatch = request.headers.get('x-if-match');
+  if (!ifMatch) return null;
+
+  const metaPath = storeMetaPath(pathname);
+  if (!await fileExists(metaPath)) {
+    return blobErrorResponse(412);
+  }
+
+  const metadata = await readJsonFile(metaPath);
+  if (metadata?.etag !== ifMatch) {
+    return blobErrorResponse(412);
+  }
+
+  return null;
 }
 
 export async function persistBlob(pathname: string, blob: Blob, metadata: any) {

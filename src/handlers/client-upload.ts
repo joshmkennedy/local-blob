@@ -1,5 +1,5 @@
 import { handleUpload } from '@vercel/blob/client';
-import { defineHandler } from './common.ts';
+import { blobErrorResponse, defineHandler } from './common.ts';
 
 const completedUploads: any[] = [];
 
@@ -14,10 +14,17 @@ export default defineHandler({
     }
 
     if (request.method !== 'POST') {
-      return Response.json({ error: 'Method not allowed' }, { status: 405 });
+      return blobErrorResponse(405, 'Method not allowed');
     }
 
     const body = await request.json();
+    if (body?.type === 'blob.generate-presigned-url') {
+      return blobErrorResponse(
+        400,
+        'handleUploadPresigned and presigned client uploads are not supported by local-blob. Use @vercel/blob/client.upload with client tokens for local development.'
+      );
+    }
+
     const result = await handleUpload({
       request,
       body,

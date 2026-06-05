@@ -177,3 +177,6 @@ dist
 .store
 .local-blob-store
 .prototype-vercel-blob-store
+
+# Local reference repositories
+.repos/

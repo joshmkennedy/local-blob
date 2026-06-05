@@ -1,15 +1,17 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import {
-  blobUrl,
+  applyRandomSuffix,
+  blobErrorResponse,
+  createBlobMetadata,
   defineHandler,
   fileExists,
   normalizeBlobPathname,
   pathnameFromRequest,
-  readJsonFile,
+  persistBlob,
+  putResultFromMetadata,
   storeFilePath,
   storeMetaPath,
-  writeText,
+  validateIfMatch,
 } from './common.ts';
 
 export default defineHandler({
@@ -19,25 +21,38 @@ export default defineHandler({
   },
   async handle (url: URL, request) {
     const fromPath = normalizeBlobPathname(url.searchParams.get('fromUrl'));
-    const toPath = pathnameFromRequest(url);
+    const requestedToPath = pathnameFromRequest(url);
+    const toPath = applyRandomSuffix(requestedToPath, request.headers);
     const metaFile = storeMetaPath(fromPath);
     const file = storeFilePath(fromPath);
-    if (await fileExists(metaFile) && await fileExists(file)) {
-      const meta = await readJsonFile(metaFile);
-      meta.url = blobUrl(url.origin, toPath);
-      const downloadUrl = new URL(meta.url);
-      downloadUrl.searchParams.set('download', '1');
-      meta.downloadUrl = downloadUrl.toString();
-      meta.pathname = toPath;
-      meta.uploadedAt = new Date();
-      const destinationPath = storeFilePath(toPath);
-      await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-      await writeText(storeMetaPath(toPath), JSON.stringify(meta, undefined, 2));
-      await fs.cp(storeFilePath(fromPath), destinationPath);
 
-      return Response.json(meta);
-    } else {
-      return new Response(null, { status: 404 });
+    if (!await fileExists(metaFile) || !await fileExists(file)) {
+      return blobErrorResponse(404);
     }
+
+    const ifMatchFailure = await validateIfMatch(toPath, request);
+    if (ifMatchFailure) return ifMatchFailure;
+
+    if (!request.headers.has('x-if-match') && request.headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(toPath))) {
+      return blobErrorResponse(
+        412,
+        'Blob already exists. Pass allowOverwrite: true to overwrite it.',
+        'precondition_failed'
+      );
+    }
+
+    const blob = new Blob([await fs.readFile(file)], {
+      type: request.headers.get('x-content-type') || 'application/octet-stream',
+    });
+    const metadata = createBlobMetadata({
+      origin: url.origin,
+      pathname: toPath,
+      blob,
+      headers: request.headers,
+    });
+
+    await persistBlob(toPath, blob, metadata);
+
+    return Response.json(putResultFromMetadata(metadata));
   },
 });

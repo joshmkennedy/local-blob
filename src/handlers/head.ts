@@ -1,4 +1,4 @@
-import { defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
+import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'head',
@@ -13,7 +13,7 @@ export default defineHandler({
       const data = await readJsonFile(file);
       return Response.json(data);
     } else {
-      return new Response(null, { status: 404 });
+      return blobErrorResponse(404);
     }
   },
 });
