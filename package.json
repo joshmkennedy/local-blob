@@ -1,6 +1,6 @@
 {
   "name": "local-blobtastic",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local development emulator for the Vercel Blob API.",
   "type": "module",
   "bin": {
