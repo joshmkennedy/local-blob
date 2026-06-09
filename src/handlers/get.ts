@@ -17,14 +17,30 @@ export default defineHandler({
         'Content-Type': data.contentType,
         'Content-Length': String(data.size),
         'Cache-Control': data.cacheControl,
-        'Last-Modified': String(new Date(data.uploadedAt)),
+        'Last-Modified': new Date(data.uploadedAt).toUTCString(),
+        'ETag': data.etag,
         'Content-Disposition': isDownload
           ? contentDispositionForPathname(data.pathname, 'attachment')
           : data.contentDisposition,
       });
+
+      if (matchesIfNoneMatch(request.headers.get('if-none-match'), data.etag)) {
+        headers.delete('Content-Length');
+        return new Response(null, { status: 304, headers });
+      }
+
       return new Response(await fs.readFile(file), { headers });
     } else {
       return blobErrorResponse(404);
     }
   },
 });
+
+function matchesIfNoneMatch(value: string | null, etag: string | undefined) {
+  if (!value || !etag) return false;
+
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim())
+    .some((candidate) => candidate === '*' || candidate === etag);
+}

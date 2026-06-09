@@ -62,6 +62,27 @@ test('uploads and downloads a blob', async () => {
   assert.equal(await getResponse.text(), 'Hello, World!');
 });
 
+test('direct blob reads return ETag and support conditional 304 responses', async () => {
+  const uploaded = await put('sdk-conditional-read.txt', 'cache me', {
+    access: 'public',
+    token: TEST_TOKEN,
+  });
+
+  const firstResponse = await fetch(uploaded.url);
+  assert.equal(firstResponse.status, 200);
+  assert.equal(firstResponse.headers.get('etag'), uploaded.etag);
+  assert.equal(await firstResponse.text(), 'cache me');
+
+  const conditionalResponse = await fetch(uploaded.url, {
+    headers: {
+      'if-none-match': uploaded.etag,
+    },
+  });
+  assert.equal(conditionalResponse.status, 304);
+  assert.equal(conditionalResponse.headers.get('etag'), uploaded.etag);
+  assert.equal(await conditionalResponse.text(), '');
+});
+
 test('returns metadata for head endpoint', async () => {
   await fetch(`${BASE_URL}/meta.txt`, { method: 'PUT', body: 'metadata' });
   const response = await fetch(`${BASE_URL}/?url=/meta.txt`);
