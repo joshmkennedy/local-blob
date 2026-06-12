@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { copy, del, get, head, list, put } from '@vercel/blob';
+import { copy, del, head, list, put } from '@vercel/blob';
 
 const port = 9966;
 const token = 'vercel_blob_rw_localstore_nonce';
@@ -24,7 +24,11 @@ try {
   });
   console.log('put', uploaded);
   console.log('head', await head(uploaded.pathname, { token }));
-  console.log('get', await (await get(uploaded.url, { token })).text());
+  const getResponse = await fetch(uploaded.url);
+  if (!getResponse.ok) {
+    throw new Error(`Failed to fetch uploaded blob: ${getResponse.status} ${getResponse.statusText}`);
+  }
+  console.log('get', await getResponse.text());
   console.log('list', await list({ prefix: 'demo/', token }));
   console.log('copy', await copy(uploaded.pathname, 'demo/copied.txt', { access: 'public', token }));
   await del([uploaded.pathname, 'demo/copied.txt'], { token });

@@ -1,11 +1,15 @@
-import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
+import { authorizeReadWriteRequest, blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'head',
-  test (url: URL, request: Request) {
-    return request.method === 'GET' && url.pathname === '/' && url.searchParams.has('url');
+  test (ctx) {
+    return ctx.request.method === 'GET' && ctx.url.pathname === '/' && ctx.url.searchParams.has('url');
   },
-  async handle (url: URL, request) {
+  async handle (ctx) {
+    const { url } = ctx;
+    const forbidden = authorizeReadWriteRequest(ctx.request);
+    if (forbidden) return forbidden;
+
     const headPathname = normalizeBlobPathname(url.searchParams.get('url'));
     const file = storeMetaPath(headPathname);
 

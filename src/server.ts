@@ -2,13 +2,40 @@
 
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import { HttpError, blobErrorResponse, type Handler } from './handlers/common.ts';
+import type { BlobContext, Handler } from './handlers/common.ts';
 
 type CliOptions = {
   port: number;
   storePath: string;
   token: string;
 };
+
+const CORS_ALLOW_METHODS = 'GET, HEAD, PUT, POST, DELETE, OPTIONS';
+const CORS_DEFAULT_ALLOW_HEADERS = [
+  'authorization',
+  'content-disposition',
+  'content-type',
+  'if-none-match',
+  'x-add-random-suffix',
+  'x-allow-overwrite',
+  'x-api-version',
+  'x-cache-control-max-age',
+  'x-content-type',
+  'x-forwarded-host',
+  'x-if-match',
+  'x-mpu-action',
+  'x-mpu-part-number',
+  'x-mpu-upload-id',
+  'x-vercel-blob-access',
+  'x-vercel-signature',
+].join(', ');
+const CORS_EXPOSE_HEADERS = [
+  'cache-control',
+  'content-disposition',
+  'content-length',
+  'etag',
+  'last-modified',
+].join(', ');
 
 void main();
 
@@ -19,7 +46,11 @@ async function main() {
   process.env.BLOB_READ_WRITE_TOKEN = options.token;
   process.env.VERCEL_BLOB_API_URL = `http://localhost:${options.port}`;
 
-  const [clientUpload, multipart, head, list, get, copy, put, del] = await Promise.all([
+  const [localConfig, localUrl, common, signedToken, clientUpload, multipart, head, list, get, copy, put, del, presignedUnsupported] = await Promise.all([
+    import('./local-config.ts'),
+    import('./local-url.ts'),
+    import('./handlers/common.ts'),
+    import('./handlers/signed-token.ts'),
     import('./handlers/client-upload.ts'),
     import('./handlers/multipart.ts'),
     import('./handlers/head.ts'),
@@ -28,9 +59,11 @@ async function main() {
     import('./handlers/copy.ts'),
     import('./handlers/put.ts'),
     import('./handlers/del.ts'),
+    import('./handlers/presigned-unsupported.ts'),
   ]);
 
   const handlers: Handler[] = [
+    signedToken.default,
     clientUpload.default,
     multipart.default,
     head.default,
@@ -39,11 +72,13 @@ async function main() {
     copy.default,
     put.default,
     del.default,
+    presignedUnsupported.default,
   ];
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
-      const host = incoming.headers.host ?? `localhost:${options.port}`;
+      const forwardedHost = incoming.headers['x-forwarded-host'];
+      const host = headerValue(forwardedHost) ?? incoming.headers.host ?? `localhost:${options.port}`;
       const url = new URL(incoming.url ?? '/', `http://${host}`);
       const request = new Request(url, {
         method: incoming.method,
@@ -54,37 +89,37 @@ async function main() {
             : (Readable.toWeb(incoming) as ReadableStream),
         duplex: 'half',
       } as RequestInit);
+      const ctx: BlobContext = { url, request, objectRequest: localUrl.parseObjectRequest(url) };
 
-      if (isPresignedUrlRequest(url)) {
-        await sendResponse(outgoing, blobErrorResponse(
-          400,
-          'Presigned URL flows are not supported by local-blob. Use read/write tokens or client-token uploads for local development.'
-        ));
+      if (request.method === 'OPTIONS') {
+        await sendResponse(outgoing, corsPreflightResponse(request), request);
         return;
       }
 
       for (const handler of handlers) {
-        if (handler.test(url, request)) {
-          await sendResponse(outgoing, await handler.handle(url, request));
+        if (handler.test(ctx)) {
+          await sendResponse(outgoing, await common.runHandler(ctx, handler), request);
           return;
         }
       }
 
-      await sendResponse(outgoing, blobErrorResponse(404));
+      await sendResponse(outgoing, common.blobErrorResponse(404), request);
     } catch (e) {
       console.error(e);
-      if (e instanceof HttpError) {
-        await sendResponse(outgoing, blobErrorResponse(e.status, e.message, e.code));
+      if (e instanceof common.HttpError) {
+        await sendResponse(outgoing, common.blobErrorResponse(e.status, e.message, e.code), incoming);
         return;
       }
 
       const status = Number.isInteger((e as any)?.status) ? (e as any).status : 500;
-      await sendResponse(outgoing, blobErrorResponse(status, String((e as any)?.message ?? e)));
+      await sendResponse(outgoing, common.blobErrorResponse(status, String((e as any)?.message ?? e)), incoming);
     }
   });
 
   server.listen(options.port, () => {
-    console.log(`local-blob listening on http://localhost:${options.port}`);
+    const config = localConfig.resolveLocalConfig();
+    console.log(`local-blob control plane listening on http://localhost:${options.port}`);
+    console.log(`local-blob object plane using http://${config.storeId}.<public|private>.localhost:${options.port}/<pathname>`);
     console.log(`storing blobs in ${options.storePath}`);
     console.log('');
     console.log('Add to your app .env.local:');
@@ -93,11 +128,12 @@ async function main() {
   });
 }
 
-function isPresignedUrlRequest(url: URL) {
-  return url.searchParams.has('vercel-blob-delegation') || url.searchParams.has('vercel-blob-signature');
+function headerValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
-async function sendResponse(outgoing: http.ServerResponse, response: Response) {
+async function sendResponse(outgoing: http.ServerResponse, response: Response, request: Request | http.IncomingMessage) {
+  applyCorsHeaders(response.headers, request);
   outgoing.statusCode = response.status;
   response.headers.forEach((value, key) => outgoing.setHeader(key, value));
 
@@ -108,6 +144,26 @@ async function sendResponse(outgoing: http.ServerResponse, response: Response) {
 
   const buffer = Buffer.from(await response.arrayBuffer());
   outgoing.end(buffer);
+}
+
+function corsPreflightResponse(request: Request) {
+  const headers = new Headers();
+  applyCorsHeaders(headers, request);
+  return new Response(null, { status: 204, headers });
+}
+
+function applyCorsHeaders(headers: Headers, request: Request | http.IncomingMessage) {
+  const requestedHeaders = headerValue(
+    request instanceof Request
+      ? request.headers.get('access-control-request-headers') ?? undefined
+      : request.headers['access-control-request-headers']
+  );
+
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
+  headers.set('Access-Control-Allow-Headers', requestedHeaders || CORS_DEFAULT_ALLOW_HEADERS);
+  headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  headers.set('Access-Control-Max-Age', '86400');
 }
 
 function parseCliOptions(args: string[]): CliOptions {

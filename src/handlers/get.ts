@@ -1,18 +1,28 @@
 import fs from 'node:fs/promises';
-import { blobErrorResponse, contentDispositionForPathname, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeFilePath, storeMetaPath } from './common.ts';
+import { authorizeBlobRead, blobErrorResponse, contentDispositionForPathname, defineHandler, fileExists, isPresignedUrlRequest, normalizeBlobPathname, readJsonFile, storeFilePath, storeMetaPath } from './common.ts';
+import { verifyPresignedRequest } from '../presign.ts';
 
 export default defineHandler({
   name: 'get',
-  test (url, request) {
-    return (request.method === 'GET') && !url.searchParams.has('url');
+  test (ctx) {
+    return (ctx.request.method === 'GET' || ctx.request.method === 'HEAD') && !ctx.url.searchParams.has('url');
   },
-  async handle (url, request) {
+  async handle (ctx) {
+    const { url, request } = ctx;
     const isDownload = url.searchParams.get('download') === '1';
     const pathname = normalizeBlobPathname(url.pathname);
     const metaFile = storeMetaPath(pathname);
     const file = storeFilePath(pathname);
     if (await fileExists(metaFile) && await fileExists(file)) {
       const data = await readJsonFile(metaFile);
+      if (isPresignedUrlRequest(url)) {
+        ctx.presign = verifyPresignedRequest(url, request.method === 'HEAD' ? 'head' : 'get', {
+          pathname: data.url === data.pathname ? data.pathname : undefined,
+        });
+      }
+      const forbidden = authorizeBlobRead(data, request, ctx.presign);
+      if (forbidden) return forbidden;
+
       const headers = new Headers({
         'Content-Type': data.contentType,
         'Content-Length': String(data.size),
@@ -27,6 +37,10 @@ export default defineHandler({
       if (matchesIfNoneMatch(request.headers.get('if-none-match'), data.etag)) {
         headers.delete('Content-Length');
         return new Response(null, { status: 304, headers });
+      }
+
+      if (request.method === 'HEAD') {
+        return new Response(null, { headers });
       }
 
       return new Response(await fs.readFile(file), { headers });
