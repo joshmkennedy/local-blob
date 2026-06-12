@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { resolveLocalConfig } from '../local-config.ts';
 import { objectUrl, type ObjectRequestInfo } from '../local-url.ts';
 
@@ -190,6 +190,17 @@ export function hasReadWriteAccess(request: Request) {
 
 export function authorizeReadWriteRequest(request: Request) {
   return hasReadWriteAccess(request) ? null : blobErrorResponse(403);
+}
+
+export function authorizeBlobWriteRequest(request: Request, pathname: string) {
+  if (hasReadWriteAccess(request)) return null;
+
+  const token = bearerTokenFromRequest(request);
+  if (token?.startsWith('vercel_blob_client_')) {
+    return validateClientUploadToken(token, pathname);
+  }
+
+  return blobErrorResponse(403);
 }
 
 export function authorizeBlobRead(metadata: any, request: Request, presign?: any) {
@@ -418,6 +429,54 @@ export function bearerTokenFromRequest(request: Request) {
   const authorization = request.headers.get('authorization');
   const match = authorization?.match(/^Bearer\s+(.+)$/i);
   return match?.[1];
+}
+
+function validateClientUploadToken(token: string, pathname: string) {
+  const match = token.match(/^vercel_blob_client_([^_]+)_(.+)$/);
+  if (!match) {
+    return blobErrorResponse(403);
+  }
+
+  const [, storeId, encodedToken] = match;
+  if (storeId !== resolveLocalConfig().storeId) {
+    return blobErrorResponse(403);
+  }
+
+  const decodedToken = Buffer.from(encodedToken, 'base64').toString();
+  const [signature, encodedPayload] = decodedToken.split('.');
+  if (!signature || !encodedPayload) {
+    return blobErrorResponse(403);
+  }
+
+  const expectedSignature = createHmac('sha256', resolveLocalConfig().readWriteToken)
+    .update(encodedPayload)
+    .digest('hex');
+  if (!safeEqual(signature, expectedSignature)) {
+    return blobErrorResponse(403);
+  }
+
+  let payload: any;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, 'base64').toString());
+  } catch {
+    return blobErrorResponse(403);
+  }
+
+  if (Number.isFinite(payload.validUntil) && Date.now() > payload.validUntil) {
+    return blobErrorResponse(403, 'Token expired');
+  }
+
+  if (payload.pathname && normalizeBlobPathname(payload.pathname) !== normalizeBlobPathname(pathname)) {
+    return blobErrorResponse(403, `"pathname" ${pathname} does not match the token payload.`);
+  }
+
+  return null;
+}
+
+function safeEqual(actual: string, expected: string) {
+  const actualBuffer = Buffer.from(actual);
+  const expectedBuffer = Buffer.from(expected);
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function decodeClientTokenPayload(token: string): any | null {

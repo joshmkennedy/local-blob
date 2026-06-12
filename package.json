@@ -18,10 +18,14 @@
   "scripts": {
     "start": "node dist/server.cjs",
     "build": "esbuild src/server.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/server.cjs",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
     "dev": "tsx src/server.ts",
     "demo": "npm run build && tsx scripts/prove-blob-workflow.ts",
     "serve:local": "node dist/server.cjs --port 9966 --store .local-blob-store --token vercel_blob_rw_localstore_nonce",
     "test": "npm run build && node --test",
+    "prepack": "npm run check",
+    "prepublishOnly": "npm run check",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"

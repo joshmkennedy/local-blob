@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   applyRandomSuffix,
+  authorizeBlobWriteRequest,
   blobErrorResponse,
   createBlobMetadata,
   defineHandler,
@@ -37,6 +38,9 @@ export default defineHandler({
       const isPresigned = isPresignedUrlRequest(url);
       if (isPresigned) {
         ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      } else {
+        const forbidden = authorizeBlobWriteRequest(request, requestedPathname);
+        if (forbidden) return forbidden;
       }
       const headers = isPresigned ? headersForPresignedPut(url, request.headers) : request.headers;
       const pathname = applyRandomSuffix(requestedPathname, headers);
@@ -58,6 +62,9 @@ export default defineHandler({
       const requestedPathname = pathnameFromRequest(url);
       if (isPresignedUrlRequest(url)) {
         ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      } else {
+        const forbidden = authorizeBlobWriteRequest(request, requestedPathname);
+        if (forbidden) return forbidden;
       }
       const uploadId = requireHeader(request, 'x-mpu-upload-id');
       const partNumber = Number(requireHeader(request, 'x-mpu-part-number'));
@@ -76,6 +83,9 @@ export default defineHandler({
       const requestedPathname = pathnameFromRequest(url);
       if (isPresignedUrlRequest(url)) {
         ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      } else {
+        const forbidden = authorizeBlobWriteRequest(request, requestedPathname);
+        if (forbidden) return forbidden;
       }
       const uploadId = requireHeader(request, 'x-mpu-upload-id');
       const uploadMetadata = await readJsonFile(path.join(uploadPath(uploadId), 'meta.json'));
@@ -138,13 +148,17 @@ function requireHeader(request: Request, name: string) {
 }
 
 function headersToObject(headers: Headers) {
-  return Object.fromEntries(headers.entries());
+  const object: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    object[key] = value;
+  });
+  return object;
 }
 
 function headersFromStoredOptions(storedHeaders: Record<string, string> | undefined, requestHeaders: Headers) {
   const headers = new Headers(storedHeaders);
-  for (const [key, value] of requestHeaders.entries()) {
+  requestHeaders.forEach((value, key) => {
     if (!headers.has(key)) headers.set(key, value);
-  }
+  });
   return headers;
 }

@@ -1,5 +1,5 @@
 import { unlink } from 'node:fs/promises';
-import { blobErrorResponse, defineHandler, fileExists, isPresignedUrlRequest, normalizeBlobPathname, pathnameFromRequest, storeFilePath, storeMetaPath, validateIfMatch, validateIfMatchHeaders } from './common.ts';
+import { authorizeReadWriteRequest, blobErrorResponse, defineHandler, fileExists, isPresignedUrlRequest, normalizeBlobPathname, pathnameFromRequest, storeFilePath, storeMetaPath, validateIfMatch, validateIfMatchHeaders } from './common.ts';
 import { headersForPresignedPut, verifyPresignedRequest } from '../presign.ts';
 
 export default defineHandler({
@@ -17,6 +17,9 @@ export default defineHandler({
       const pathname = pathnameFromRequest(url);
       if (isPresignedUrlRequest(url)) {
         ctx.presign = verifyPresignedRequest(url, 'delete', { pathname });
+      } else {
+        const forbidden = authorizeReadWriteRequest(request);
+        if (forbidden) return forbidden;
       }
 
       const fileUrl = storeFilePath(pathname);
@@ -33,6 +36,9 @@ export default defineHandler({
       if (await fileExists(metaFileUrl)) await unlink(metaFileUrl);
       return Response.json(null, { status: 200 });
     }
+
+    const forbidden = authorizeReadWriteRequest(request);
+    if (forbidden) return forbidden;
 
     const body: { urls: string[] } = await request.json();
 

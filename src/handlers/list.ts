@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { HttpError, defineHandler, storePath } from './common.ts';
+import { HttpError, authorizeReadWriteRequest, defineHandler, storePath } from './common.ts';
 
 const META_SUFFIX = '._vercel_mock_meta_';
 const DEFAULT_LIMIT = 1000;
@@ -14,6 +14,9 @@ export default defineHandler({
   },
   async handle(ctx) {
     const { url } = ctx;
+    const forbidden = authorizeReadWriteRequest(ctx.request);
+    if (forbidden) return forbidden;
+
     const prefix = normalizeListPrefix(url.searchParams.get('prefix'));
     const limit = parseLimit(url.searchParams.get('limit'));
     const offset = parseCursor(url.searchParams.get('cursor'));

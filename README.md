@@ -134,9 +134,13 @@ Missing blobs return `404`; existing private blobs without valid bearer or presi
 
 ### SDK `get()` limitation
 
-Do not use `@vercel/blob.get()` with the local emulator. `get(blob.url, ...)` rejects `localhost` URLs because they are not `*.blob.vercel-storage.com`, and `get('hello.txt', ...)` builds a production Vercel Blob URL rather than using `VERCEL_BLOB_API_URL`.
+Do not use `@vercel/blob.get()` with the local emulator. This is an upstream SDK routing/validation limitation, not a missing object-read handler in `local-blob`.
 
-Recommended local workflow: use SDK control-plane helpers for writes/listing/metadata, then use direct `fetch(blob.url)` or a presigned local URL for object reads.
+The emulator serves object reads from the local object-plane URLs returned by write operations, for example `http://localstore.public.localhost:3000/hello.txt`. Direct `fetch(blob.url)` works against those URLs.
+
+`@vercel/blob.get()` is different from `fetch`: it assumes Vercel's production object URL model. In `@vercel/blob@2.4.0`, `get(blob.url, ...)` rejects local `*.localhost` object URLs because they are not `*.blob.vercel-storage.com`, and `get('hello.txt', ...)` builds a production Vercel Blob URL rather than routing through `VERCEL_BLOB_API_URL`. In both cases, the failed request is decided inside the SDK before the local emulator can handle it.
+
+Recommended local workflow: use SDK control-plane helpers for writes/listing/metadata, then use direct `fetch(blob.url)`, authenticated `fetch(blob.url)` for private blobs, or `fetch(presignedUrl)` for presigned object reads.
 
 ## Writing and overwriting blobs locally
 
@@ -282,7 +286,7 @@ For presigned uploads, callback token payloads are round-tripped through the sig
 | `upload` / `handleUpload` | Supported | Client-token upload flow. |
 | `uploadPresigned` | Supported | Single-part and multipart tested locally. |
 | Upload-completed callbacks | Supported | Client-token callbacks are HMAC-signed; local presigned callbacks are delivered to the local route for app-test inspection. |
-| `@vercel/blob.get()` | Not supported locally | `get(url)` rejects localhost; `get(pathname)` builds production URLs. Use direct `fetch`. |
+| `@vercel/blob.get()` | Not supported locally | SDK-side limitation: `get(url)` rejects local object URLs; `get(pathname)` builds production object URLs instead of using `VERCEL_BLOB_API_URL`. Use direct `fetch`. |
 | OIDC auth | Not supported | Use `BLOB_READ_WRITE_TOKEN` locally. |
 | CDN/cache propagation semantics | Not supported | Local emulator only. |
 
@@ -298,7 +302,7 @@ The emulator returns Vercel Blob-style JSON errors for common cases:
 
 ## Known gaps
 
-- `@vercel/blob.get(...)` is not supported against the local emulator. Use direct `fetch(blob.url)` or `fetch(presignedUrl)` instead.
+- `@vercel/blob.get(...)` is not supported against the local emulator because the upstream SDK validates/builds production Vercel Blob object URLs instead of routing local object reads through `VERCEL_BLOB_API_URL`. Use direct `fetch(blob.url)`, authenticated private `fetch(blob.url)`, or `fetch(presignedUrl)` instead.
 - Real Vercel OIDC auth is not emulated; use local read-write bearer auth.
 - Transparent interception of production `*.blob.vercel-storage.com` hosts is not supported.
 - CDN behavior, propagation delays, regional storage behavior, billing semantics, and production cache invalidation are not emulated.

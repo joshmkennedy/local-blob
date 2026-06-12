@@ -10,6 +10,33 @@ type CliOptions = {
   token: string;
 };
 
+const CORS_ALLOW_METHODS = 'GET, HEAD, PUT, POST, DELETE, OPTIONS';
+const CORS_DEFAULT_ALLOW_HEADERS = [
+  'authorization',
+  'content-disposition',
+  'content-type',
+  'if-none-match',
+  'x-add-random-suffix',
+  'x-allow-overwrite',
+  'x-api-version',
+  'x-cache-control-max-age',
+  'x-content-type',
+  'x-forwarded-host',
+  'x-if-match',
+  'x-mpu-action',
+  'x-mpu-part-number',
+  'x-mpu-upload-id',
+  'x-vercel-blob-access',
+  'x-vercel-signature',
+].join(', ');
+const CORS_EXPOSE_HEADERS = [
+  'cache-control',
+  'content-disposition',
+  'content-length',
+  'etag',
+  'last-modified',
+].join(', ');
+
 void main();
 
 async function main() {
@@ -64,23 +91,28 @@ async function main() {
       } as RequestInit);
       const ctx: BlobContext = { url, request, objectRequest: localUrl.parseObjectRequest(url) };
 
+      if (request.method === 'OPTIONS') {
+        await sendResponse(outgoing, corsPreflightResponse(request), request);
+        return;
+      }
+
       for (const handler of handlers) {
         if (handler.test(ctx)) {
-          await sendResponse(outgoing, await common.runHandler(ctx, handler));
+          await sendResponse(outgoing, await common.runHandler(ctx, handler), request);
           return;
         }
       }
 
-      await sendResponse(outgoing, common.blobErrorResponse(404));
+      await sendResponse(outgoing, common.blobErrorResponse(404), request);
     } catch (e) {
       console.error(e);
       if (e instanceof common.HttpError) {
-        await sendResponse(outgoing, common.blobErrorResponse(e.status, e.message, e.code));
+        await sendResponse(outgoing, common.blobErrorResponse(e.status, e.message, e.code), incoming);
         return;
       }
 
       const status = Number.isInteger((e as any)?.status) ? (e as any).status : 500;
-      await sendResponse(outgoing, common.blobErrorResponse(status, String((e as any)?.message ?? e)));
+      await sendResponse(outgoing, common.blobErrorResponse(status, String((e as any)?.message ?? e)), incoming);
     }
   });
 
@@ -100,7 +132,8 @@ function headerValue(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
 }
 
-async function sendResponse(outgoing: http.ServerResponse, response: Response) {
+async function sendResponse(outgoing: http.ServerResponse, response: Response, request: Request | http.IncomingMessage) {
+  applyCorsHeaders(response.headers, request);
   outgoing.statusCode = response.status;
   response.headers.forEach((value, key) => outgoing.setHeader(key, value));
 
@@ -111,6 +144,26 @@ async function sendResponse(outgoing: http.ServerResponse, response: Response) {
 
   const buffer = Buffer.from(await response.arrayBuffer());
   outgoing.end(buffer);
+}
+
+function corsPreflightResponse(request: Request) {
+  const headers = new Headers();
+  applyCorsHeaders(headers, request);
+  return new Response(null, { status: 204, headers });
+}
+
+function applyCorsHeaders(headers: Headers, request: Request | http.IncomingMessage) {
+  const requestedHeaders = headerValue(
+    request instanceof Request
+      ? request.headers.get('access-control-request-headers') ?? undefined
+      : request.headers['access-control-request-headers']
+  );
+
+  headers.set('Access-Control-Allow-Origin', '*');
+  headers.set('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
+  headers.set('Access-Control-Allow-Headers', requestedHeaders || CORS_DEFAULT_ALLOW_HEADERS);
+  headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
+  headers.set('Access-Control-Max-Age', '86400');
 }
 
 function parseCliOptions(args: string[]): CliOptions {

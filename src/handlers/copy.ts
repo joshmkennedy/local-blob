@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import {
   applyRandomSuffix,
+  authorizeReadWriteRequest,
   blobErrorResponse,
   createBlobMetadata,
   defineHandler,
@@ -23,6 +24,9 @@ export default defineHandler({
   },
   async handle (ctx) {
     const { url, request } = ctx;
+    const forbidden = authorizeReadWriteRequest(request);
+    if (forbidden) return forbidden;
+
     const fromPath = normalizeBlobPathname(url.searchParams.get('fromUrl'));
     const requestedToPath = requirePathname(ctx);
     const toPath = applyRandomSuffix(requestedToPath, request.headers);

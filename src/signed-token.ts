@@ -132,7 +132,7 @@ function validateDelegationPayload(payload: DelegationPayload, config: LocalConf
 }
 
 function normalizeOperations(operations: DelegationOperation[] | undefined): DelegationOperation[] {
-  const normalized = operations ? Array.from(new Set(operations)) : ['get'];
+  const normalized: DelegationOperation[] = operations ? Array.from(new Set(operations)) : ['get'];
   if (normalized.length === 0) {
     throw new HttpError('operations must be a non-empty array if provided.', 400);
   }

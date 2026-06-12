@@ -1,4 +1,4 @@
-import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
+import { authorizeReadWriteRequest, blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, readJsonFile, storeMetaPath } from './common.ts';
 
 export default defineHandler({
   name: 'head',
@@ -7,6 +7,9 @@ export default defineHandler({
   },
   async handle (ctx) {
     const { url } = ctx;
+    const forbidden = authorizeReadWriteRequest(ctx.request);
+    if (forbidden) return forbidden;
+
     const headPathname = normalizeBlobPathname(url.searchParams.get('url'));
     const file = storeMetaPath(headPathname);
 

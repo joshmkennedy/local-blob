@@ -20,7 +20,7 @@ import {
   put,
   uploadPart,
 } from '@vercel/blob';
-import { upload as clientUpload, uploadPresigned } from '@vercel/blob/client';
+import { generateClientTokenFromReadWriteToken, upload as clientUpload, uploadPresigned } from '@vercel/blob/client';
 import {
   decodeDelegationToken,
   issueLocalSignedToken,
@@ -71,7 +71,10 @@ test('uploads and downloads a blob', async () => {
   const response = await fetch(`${BASE_URL}/hello.txt`, {
     method: 'PUT',
     body: new Blob(['Hello, World!'], { type: 'text/plain' }),
-    headers: { 'X-Content-Type': 'text/plain' },
+    headers: {
+      authorization: `Bearer ${TEST_TOKEN}`,
+      'X-Content-Type': 'text/plain',
+    },
   });
   assert.equal(response.status, 200);
   const data = await response.json();
@@ -125,13 +128,141 @@ test('direct blob reads return ETag and support conditional 304 responses', asyn
   assert.equal(await conditionalResponse.text(), '');
 });
 
+test('browser CORS preflight allows direct blob uploads and reads', async () => {
+  const response = await fetch(objectUrl('public', 'cors-preflight.txt'), {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost:5173',
+      'access-control-request-method': 'PUT',
+      'access-control-request-headers': 'content-type,x-content-type,x-allow-overwrite',
+    },
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.match(response.headers.get('access-control-allow-methods'), /\bPUT\b/);
+  assert.equal(response.headers.get('access-control-allow-headers'), 'content-type,x-content-type,x-allow-overwrite');
+  assert.match(response.headers.get('access-control-expose-headers'), /\betag\b/);
+});
+
+test('browser CORS headers are returned on object reads and errors', async () => {
+  const uploaded = await put('sdk-cors-read.txt', 'cors body', {
+    access: 'public',
+    token: TEST_TOKEN,
+  });
+
+  const readResponse = await fetch(uploaded.url, {
+    headers: { origin: 'http://localhost:5173' },
+  });
+  assert.equal(readResponse.status, 200);
+  assert.equal(readResponse.headers.get('access-control-allow-origin'), '*');
+  assert.match(readResponse.headers.get('access-control-expose-headers'), /\betag\b/);
+  assert.equal(readResponse.headers.get('etag'), uploaded.etag);
+
+  const missingResponse = await fetch(`${BASE_URL}/missing-cors.txt`, {
+    headers: { origin: 'http://localhost:5173' },
+  });
+  assert.equal(missingResponse.status, 404);
+  assert.equal(missingResponse.headers.get('access-control-allow-origin'), '*');
+});
+
 test('returns metadata for head endpoint', async () => {
-  await fetch(`${BASE_URL}/meta.txt`, { method: 'PUT', body: 'metadata' });
-  const response = await fetch(`${BASE_URL}/?url=/meta.txt`);
+  await fetch(`${BASE_URL}/meta.txt`, {
+    method: 'PUT',
+    headers: { authorization: `Bearer ${TEST_TOKEN}` },
+    body: 'metadata',
+  });
+  const response = await fetch(`${BASE_URL}/?url=/meta.txt`, {
+    headers: { authorization: `Bearer ${TEST_TOKEN}` },
+  });
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.pathname, 'meta.txt');
   assert.equal(data.size, 8);
+});
+
+test('control-plane put copy list head and delete require read-write bearer auth', async () => {
+  const source = await put('sdk-control-auth-source.txt', 'source', {
+    access: 'public',
+    token: TEST_TOKEN,
+  });
+
+  const unauthenticatedPut = await fetch(`${BASE_URL}/control-auth-direct.txt`, {
+    method: 'PUT',
+    body: 'direct',
+  });
+  assert.equal(unauthenticatedPut.status, 403);
+  assert.equal((await unauthenticatedPut.json()).error.code, 'forbidden');
+
+  const wrongBearerPut = await fetch(`${BASE_URL}/control-auth-wrong.txt`, {
+    method: 'PUT',
+    headers: { authorization: 'Bearer wrong-token' },
+    body: 'direct',
+  });
+  assert.equal(wrongBearerPut.status, 403);
+
+  const fakeClientTokenPut = await fetch(`${BASE_URL}/control-auth-fake-client.txt`, {
+    method: 'PUT',
+    headers: { authorization: 'Bearer vercel_blob_client_test_fake' },
+    body: 'direct',
+  });
+  assert.equal(fakeClientTokenPut.status, 403);
+
+  const copyUrl = new URL(BASE_URL);
+  copyUrl.searchParams.set('pathname', 'control-auth-copy.txt');
+  copyUrl.searchParams.set('fromUrl', source.url);
+  assert.equal((await fetch(copyUrl, { method: 'PUT' })).status, 403);
+
+  assert.equal((await fetch(BASE_URL)).status, 403);
+  assert.equal((await fetch(`${BASE_URL}/?url=${encodeURIComponent(source.url)}`)).status, 403);
+  assert.equal((await fetch(`${BASE_URL}/?pathname=${encodeURIComponent(source.pathname)}`, { method: 'DELETE' })).status, 403);
+
+  const deleteResponse = await fetch(`${BASE_URL}/delete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ urls: [source.url] }),
+  });
+  assert.equal(deleteResponse.status, 403);
+});
+
+test('multipart create upload and complete require write auth without presigned URL', async () => {
+  const createUrl = `${BASE_URL}/mpu?pathname=sdk-control-auth-mpu.txt`;
+  const unauthenticatedCreate = await fetch(createUrl, {
+    method: 'POST',
+    headers: { 'x-mpu-action': 'create' },
+  });
+  assert.equal(unauthenticatedCreate.status, 403);
+
+  const createResponse = await fetch(createUrl, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${TEST_TOKEN}`,
+      'x-mpu-action': 'create',
+    },
+  });
+  assert.equal(createResponse.status, 200);
+  const upload = await createResponse.json();
+
+  const unauthenticatedUpload = await fetch(createUrl, {
+    method: 'POST',
+    headers: {
+      'x-mpu-action': 'upload',
+      'x-mpu-upload-id': upload.uploadId,
+      'x-mpu-part-number': '1',
+    },
+    body: 'part',
+  });
+  assert.equal(unauthenticatedUpload.status, 403);
+
+  const unauthenticatedComplete = await fetch(createUrl, {
+    method: 'POST',
+    headers: {
+      'x-mpu-action': 'complete',
+      'x-mpu-upload-id': upload.uploadId,
+    },
+    body: JSON.stringify([]),
+  });
+  assert.equal(unauthenticatedComplete.status, 403);
 });
 
 test('returns Vercel Blob-style JSON for missing blobs', async () => {
@@ -443,6 +574,68 @@ test('real SDK client-token upload writes blobs and records upload-completed cal
   );
 });
 
+test('real SDK multipart client-token upload writes blobs and records upload-completed callbacks', async () => {
+  const beforeEvents = (await (await fetch(`${BASE_URL}/client-upload-events`)).json()).completedUploads.length;
+
+  const uploaded = await clientUpload('sdk-client-upload-multipart.txt', 'client multipart body', {
+    access: 'public',
+    handleUploadUrl: `${BASE_URL}/client-upload`,
+    contentType: 'text/plain',
+    clientPayload: 'client-multipart-payload',
+    multipart: true,
+  });
+
+  assert.equal(uploaded.pathname, 'sdk-client-upload-multipart.txt');
+  assert.equal(uploaded.contentType, 'text/plain');
+  assert.equal(await (await fetch(uploaded.url)).text(), 'client multipart body');
+
+  const afterEvents = (await (await fetch(`${BASE_URL}/client-upload-events`)).json()).completedUploads;
+  assert.equal(afterEvents.length, beforeEvents + 1);
+  const latestPayload = afterEvents.at(-1).payload;
+  assert.equal(latestPayload.blob.pathname, 'sdk-client-upload-multipart.txt');
+  assert.equal(JSON.parse(latestPayload.tokenPayload).clientPayload, 'client-multipart-payload');
+  assert.equal(JSON.parse(latestPayload.tokenPayload).multipart, true);
+});
+
+test('multipart client-token auth rejects fake expired and wrong-path tokens', async () => {
+  const fakeResponse = await fetch(`${BASE_URL}/mpu?pathname=sdk-client-mpu-fake.txt`, {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer vercel_blob_client_test_fake',
+      'x-mpu-action': 'create',
+    },
+  });
+  assert.equal(fakeResponse.status, 403);
+
+  const expiredToken = await generateClientTokenFromReadWriteToken({
+    token: TEST_TOKEN,
+    pathname: 'sdk-client-mpu-expired.txt',
+    validUntil: Date.now() - 1,
+  });
+  const expiredResponse = await fetch(`${BASE_URL}/mpu?pathname=sdk-client-mpu-expired.txt`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${expiredToken}`,
+      'x-mpu-action': 'create',
+    },
+  });
+  assert.equal(expiredResponse.status, 403);
+
+  const wrongPathToken = await generateClientTokenFromReadWriteToken({
+    token: TEST_TOKEN,
+    pathname: 'sdk-client-mpu-other.txt',
+    validUntil: Date.now() + 60_000,
+  });
+  const wrongPathResponse = await fetch(`${BASE_URL}/mpu?pathname=sdk-client-mpu-wrong-path.txt`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${wrongPathToken}`,
+      'x-mpu-action': 'create',
+    },
+  });
+  assert.equal(wrongPathResponse.status, 403);
+});
+
 test('uploadPresigned single-part uploads and records callback payloads', async () => {
   const beforeEvents = (await (await fetch(`${BASE_URL}/client-upload-events`)).json()).completedUploads.length;
 
@@ -515,7 +708,9 @@ test('private object GET, HEAD, and downloadUrl require read-write bearer auth',
     token: TEST_TOKEN,
   });
 
-  const metadataResponse = await fetch(`${BASE_URL}/?url=/sdk-private-local.txt`);
+  const metadataResponse = await fetch(`${BASE_URL}/?url=/sdk-private-local.txt`, {
+    headers: { authorization: `Bearer ${TEST_TOKEN}` },
+  });
   assert.equal(metadataResponse.status, 200);
   assert.equal((await metadataResponse.json()).access, 'private');
 

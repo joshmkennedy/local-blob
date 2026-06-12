@@ -13,6 +13,7 @@ import {
   validateIfMatchHeaders,
   withPathnameFromRequest,
   isPresignedUrlRequest,
+  authorizeBlobWriteRequest,
 } from './common.ts';
 import { assertPresignedPutConstraints, headersForPresignedPut, verifyPresignedRequest } from '../presign.ts';
 
@@ -28,6 +29,9 @@ export default defineHandler({
     const isPresigned = isPresignedUrlRequest(url);
     if (isPresigned) {
       ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+    } else {
+      const forbidden = authorizeBlobWriteRequest(request, requestedPathname);
+      if (forbidden) return forbidden;
     }
     const headers = isPresigned ? headersForPresignedPut(url, request.headers) : request.headers;
     const pathname = applyRandomSuffix(requestedPathname, headers);
