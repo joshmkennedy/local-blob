@@ -5,25 +5,36 @@ import {
   defineHandler,
   fileExists,
   notifyClientUploadCompleted,
-  pathnameFromRequest,
+  notifyPresignedUploadCompleted,
   persistBlob,
   putResultFromMetadata,
+  requirePathname,
   storeMetaPath,
-  validateIfMatch,
+  validateIfMatchHeaders,
+  withPathnameFromRequest,
+  isPresignedUrlRequest,
 } from './common.ts';
+import { assertPresignedPutConstraints, headersForPresignedPut, verifyPresignedRequest } from '../presign.ts';
 
 export default defineHandler({
   name: 'put',
-  test (url: URL, request: Request): boolean {
-    return request.method === 'PUT' && !url.searchParams.has('fromUrl');
+  middleware: [withPathnameFromRequest],
+  test (ctx): boolean {
+    return ctx.request.method === 'PUT' && !ctx.url.searchParams.has('fromUrl');
   },
-  async handle (url: URL, request) {
-    const requestedPathname = pathnameFromRequest(url);
-    const pathname = applyRandomSuffix(requestedPathname, request.headers);
-    const ifMatchFailure = await validateIfMatch(pathname, request);
+  async handle (ctx) {
+    const { url, request } = ctx;
+    const requestedPathname = requirePathname(ctx);
+    const isPresigned = isPresignedUrlRequest(url);
+    if (isPresigned) {
+      ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+    }
+    const headers = isPresigned ? headersForPresignedPut(url, request.headers) : request.headers;
+    const pathname = applyRandomSuffix(requestedPathname, headers);
+    const ifMatchFailure = await validateIfMatchHeaders(pathname, headers);
     if (ifMatchFailure) return ifMatchFailure;
 
-    if (!request.headers.has('x-if-match') && request.headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(pathname))) {
+    if (!headers.has('x-if-match') && headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(pathname))) {
       return blobErrorResponse(
         412,
         'Blob already exists. Pass allowOverwrite: true to overwrite it.',
@@ -32,17 +43,21 @@ export default defineHandler({
     }
 
     const blob = await request.blob();
+    if (ctx.presign) {
+      assertPresignedPutConstraints(ctx.presign, url, blob, headers);
+    }
     const data = createBlobMetadata({
       origin: url.origin,
       pathname,
       blob,
-      headers: request.headers,
+      headers,
     });
 
     await persistBlob(pathname, blob, data);
 
     const result = putResultFromMetadata(data);
     await notifyClientUploadCompleted(request, result);
+    await notifyPresignedUploadCompleted(url, result);
 
     return Response.json(result);
   },

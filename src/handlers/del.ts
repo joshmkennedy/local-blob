@@ -1,14 +1,39 @@
 import { unlink } from 'node:fs/promises';
-import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, storeFilePath, storeMetaPath, validateIfMatch } from './common.ts';
+import { blobErrorResponse, defineHandler, fileExists, isPresignedUrlRequest, normalizeBlobPathname, pathnameFromRequest, storeFilePath, storeMetaPath, validateIfMatch, validateIfMatchHeaders } from './common.ts';
+import { headersForPresignedPut, verifyPresignedRequest } from '../presign.ts';
 
 export default defineHandler({
   name: 'del',
 
-  test(requestUrl, request) {
-    return request.method === 'POST' && requestUrl.pathname === '/delete';
+  test(ctx) {
+    return (ctx.request.method === 'POST' && ctx.url.pathname === '/delete') ||
+      (ctx.request.method === 'DELETE' && ctx.url.pathname === '/' && ctx.url.searchParams.has('pathname'));
   },
 
-  async handle(requestUrl, request) {
+  async handle(ctx) {
+    const { url, request } = ctx;
+
+    if (request.method === 'DELETE') {
+      const pathname = pathnameFromRequest(url);
+      if (isPresignedUrlRequest(url)) {
+        ctx.presign = verifyPresignedRequest(url, 'delete', { pathname });
+      }
+
+      const fileUrl = storeFilePath(pathname);
+      const metaFileUrl = storeMetaPath(pathname);
+      if (!await fileExists(fileUrl) && !await fileExists(metaFileUrl)) {
+        return blobErrorResponse(404);
+      }
+
+      const headers = ctx.presign ? headersForPresignedPut(url, request.headers) : request.headers;
+      const ifMatchFailure = await validateIfMatchHeaders(pathname, headers);
+      if (ifMatchFailure) return ifMatchFailure;
+
+      if (await fileExists(fileUrl)) await unlink(fileUrl);
+      if (await fileExists(metaFileUrl)) await unlink(metaFileUrl);
+      return Response.json(null, { status: 200 });
+    }
+
     const body: { urls: string[] } = await request.json();
 
     const urlsArray = body.urls;

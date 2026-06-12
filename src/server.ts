@@ -2,7 +2,7 @@
 
 import http from 'node:http';
 import { Readable } from 'node:stream';
-import { HttpError, blobErrorResponse, type Handler } from './handlers/common.ts';
+import type { BlobContext, Handler } from './handlers/common.ts';
 
 type CliOptions = {
   port: number;
@@ -19,7 +19,11 @@ async function main() {
   process.env.BLOB_READ_WRITE_TOKEN = options.token;
   process.env.VERCEL_BLOB_API_URL = `http://localhost:${options.port}`;
 
-  const [clientUpload, multipart, head, list, get, copy, put, del] = await Promise.all([
+  const [localConfig, localUrl, common, signedToken, clientUpload, multipart, head, list, get, copy, put, del, presignedUnsupported] = await Promise.all([
+    import('./local-config.ts'),
+    import('./local-url.ts'),
+    import('./handlers/common.ts'),
+    import('./handlers/signed-token.ts'),
     import('./handlers/client-upload.ts'),
     import('./handlers/multipart.ts'),
     import('./handlers/head.ts'),
@@ -28,9 +32,11 @@ async function main() {
     import('./handlers/copy.ts'),
     import('./handlers/put.ts'),
     import('./handlers/del.ts'),
+    import('./handlers/presigned-unsupported.ts'),
   ]);
 
   const handlers: Handler[] = [
+    signedToken.default,
     clientUpload.default,
     multipart.default,
     head.default,
@@ -39,11 +45,13 @@ async function main() {
     copy.default,
     put.default,
     del.default,
+    presignedUnsupported.default,
   ];
 
   const server = http.createServer(async (incoming, outgoing) => {
     try {
-      const host = incoming.headers.host ?? `localhost:${options.port}`;
+      const forwardedHost = incoming.headers['x-forwarded-host'];
+      const host = headerValue(forwardedHost) ?? incoming.headers.host ?? `localhost:${options.port}`;
       const url = new URL(incoming.url ?? '/', `http://${host}`);
       const request = new Request(url, {
         method: incoming.method,
@@ -54,37 +62,32 @@ async function main() {
             : (Readable.toWeb(incoming) as ReadableStream),
         duplex: 'half',
       } as RequestInit);
-
-      if (isPresignedUrlRequest(url)) {
-        await sendResponse(outgoing, blobErrorResponse(
-          400,
-          'Presigned URL flows are not supported by local-blob. Use read/write tokens or client-token uploads for local development.'
-        ));
-        return;
-      }
+      const ctx: BlobContext = { url, request, objectRequest: localUrl.parseObjectRequest(url) };
 
       for (const handler of handlers) {
-        if (handler.test(url, request)) {
-          await sendResponse(outgoing, await handler.handle(url, request));
+        if (handler.test(ctx)) {
+          await sendResponse(outgoing, await common.runHandler(ctx, handler));
           return;
         }
       }
 
-      await sendResponse(outgoing, blobErrorResponse(404));
+      await sendResponse(outgoing, common.blobErrorResponse(404));
     } catch (e) {
       console.error(e);
-      if (e instanceof HttpError) {
-        await sendResponse(outgoing, blobErrorResponse(e.status, e.message, e.code));
+      if (e instanceof common.HttpError) {
+        await sendResponse(outgoing, common.blobErrorResponse(e.status, e.message, e.code));
         return;
       }
 
       const status = Number.isInteger((e as any)?.status) ? (e as any).status : 500;
-      await sendResponse(outgoing, blobErrorResponse(status, String((e as any)?.message ?? e)));
+      await sendResponse(outgoing, common.blobErrorResponse(status, String((e as any)?.message ?? e)));
     }
   });
 
   server.listen(options.port, () => {
-    console.log(`local-blob listening on http://localhost:${options.port}`);
+    const config = localConfig.resolveLocalConfig();
+    console.log(`local-blob control plane listening on http://localhost:${options.port}`);
+    console.log(`local-blob object plane using http://${config.storeId}.<public|private>.localhost:${options.port}/<pathname>`);
     console.log(`storing blobs in ${options.storePath}`);
     console.log('');
     console.log('Add to your app .env.local:');
@@ -93,8 +96,8 @@ async function main() {
   });
 }
 
-function isPresignedUrlRequest(url: URL) {
-  return url.searchParams.has('vercel-blob-delegation') || url.searchParams.has('vercel-blob-signature');
+function headerValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 async function sendResponse(outgoing: http.ServerResponse, response: Response) {

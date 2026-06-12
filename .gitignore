@@ -180,3 +180,6 @@ dist
 
 # Local reference repositories
 .repos/
+
+# Local file issue tracker
+docs/issues/

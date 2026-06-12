@@ -6,22 +6,25 @@ import {
   defineHandler,
   fileExists,
   normalizeBlobPathname,
-  pathnameFromRequest,
   persistBlob,
   putResultFromMetadata,
+  requirePathname,
   storeFilePath,
   storeMetaPath,
   validateIfMatch,
+  withPathnameFromRequest,
 } from './common.ts';
 
 export default defineHandler({
   name: 'copy',
-  test (url: URL, request: Request): boolean {
-    return request.method === 'PUT' && url.searchParams.has('fromUrl');
+  middleware: [withPathnameFromRequest],
+  test (ctx): boolean {
+    return ctx.request.method === 'PUT' && ctx.url.searchParams.has('fromUrl');
   },
-  async handle (url: URL, request) {
+  async handle (ctx) {
+    const { url, request } = ctx;
     const fromPath = normalizeBlobPathname(url.searchParams.get('fromUrl'));
-    const requestedToPath = pathnameFromRequest(url);
+    const requestedToPath = requirePathname(ctx);
     const toPath = applyRandomSuffix(requestedToPath, request.headers);
     const metaFile = storeMetaPath(fromPath);
     const file = storeFilePath(fromPath);

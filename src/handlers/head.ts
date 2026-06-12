@@ -2,10 +2,11 @@ import { blobErrorResponse, defineHandler, fileExists, normalizeBlobPathname, re
 
 export default defineHandler({
   name: 'head',
-  test (url: URL, request: Request) {
-    return request.method === 'GET' && url.pathname === '/' && url.searchParams.has('url');
+  test (ctx) {
+    return ctx.request.method === 'GET' && ctx.url.pathname === '/' && ctx.url.searchParams.has('url');
   },
-  async handle (url: URL, request) {
+  async handle (ctx) {
+    const { url } = ctx;
     const headPathname = normalizeBlobPathname(url.searchParams.get('url'));
     const file = storeMetaPath(headPathname);
 

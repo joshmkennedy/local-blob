@@ -1,14 +1,17 @@
 import { handleUpload } from '@vercel/blob/client';
 import { blobErrorResponse, defineHandler } from './common.ts';
+import { issueLocalSignedToken } from '../signed-token.ts';
+import { signPresignedUrl } from '../presign.ts';
 
 const completedUploads: any[] = [];
 
 export default defineHandler({
   name: 'client-upload',
-  test(url: URL, request: Request): boolean {
-    return url.pathname === '/client-upload' || url.pathname === '/client-upload-events';
+  test(ctx): boolean {
+    return ctx.url.pathname === '/client-upload' || ctx.url.pathname === '/client-upload-events';
   },
-  async handle(url: URL, request: Request) {
+  async handle(ctx) {
+    const { url, request } = ctx;
     if (url.pathname === '/client-upload-events') {
       return Response.json({ completedUploads });
     }
@@ -19,10 +22,38 @@ export default defineHandler({
 
     const body = await request.json();
     if (body?.type === 'blob.generate-presigned-url') {
-      return blobErrorResponse(
-        400,
-        'handleUploadPresigned and presigned client uploads are not supported by local-blob. Use @vercel/blob/client.upload with client tokens for local development.'
-      );
+      const { pathname, clientPayload, multipart } = body.payload;
+      const token = issueLocalSignedToken({
+        pathname,
+        operations: ['put'],
+        validUntil: Date.now() + 60 * 60 * 1000,
+        allowedContentTypes: ['text/plain'],
+        maximumSizeInBytes: 20 * 1024 * 1024,
+      });
+      const entries: [string, string][] = [
+        ['vercel-blob-allowed-content-types', 'text/plain'],
+        ['vercel-blob-allow-overwrite', 'true'],
+        ['vercel-blob-cache-control-max-age', '60'],
+        ['vercel-blob-callback-url', `${url.origin}/client-upload`],
+        ['vercel-blob-callback-token-payload', JSON.stringify({ pathname, clientPayload, multipart })],
+      ];
+
+      return Response.json({
+        type: 'blob.generate-presigned-url',
+        presignedUrlPayload: {
+          delegationToken: token.delegationToken,
+          signature: signPresignedUrl(token.clientSigningToken, pathname, 'put', entries),
+          params: Object.fromEntries(entries),
+        },
+      });
+    }
+
+    if (body?.type === 'blob.upload-completed' && !request.headers.has('x-vercel-signature')) {
+      completedUploads.push({
+        receivedAt: new Date().toISOString(),
+        payload: body.payload,
+      });
+      return Response.json({ type: 'blob.upload-completed', response: 'ok' });
     }
 
     const result = await handleUpload({

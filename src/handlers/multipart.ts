@@ -7,39 +7,58 @@ import {
   defineHandler,
   fileExists,
   notifyClientUploadCompleted,
+  notifyPresignedUploadCompleted,
   pathnameFromRequest,
   persistBlob,
   putResultFromMetadata,
   readJsonFile,
   storeMetaPath,
   storePath,
-  validateIfMatch,
+  validateIfMatchHeaders,
+  isPresignedUrlRequest,
   writeBlob,
   writeText,
 } from './common.ts';
+import { assertPresignedPutConstraints, headersForPresignedPut, verifyPresignedRequest } from '../presign.ts';
 
 const MPU_DIR = '.mpu';
 
 export default defineHandler({
   name: 'multipart',
-  test(url: URL, request: Request): boolean {
-    return request.method === 'POST' && url.pathname === '/mpu';
+  test(ctx): boolean {
+    return ctx.request.method === 'POST' && ctx.url.pathname === '/mpu';
   },
-  async handle(url: URL, request: Request) {
+  async handle(ctx) {
+    const { url, request } = ctx;
     const action = request.headers.get('x-mpu-action');
 
     if (action === 'create') {
       const requestedPathname = pathnameFromRequest(url);
-      const pathname = applyRandomSuffix(requestedPathname, request.headers);
+      const isPresigned = isPresignedUrlRequest(url);
+      if (isPresigned) {
+        ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      }
+      const headers = isPresigned ? headersForPresignedPut(url, request.headers) : request.headers;
+      const pathname = applyRandomSuffix(requestedPathname, headers);
       const uploadId = `local-mpu-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const key = pathname;
       await fs.mkdir(uploadPath(uploadId), { recursive: true });
-      await writeText(path.join(uploadPath(uploadId), 'meta.json'), JSON.stringify({ requestedPathname, pathname, key }, null, 2));
+      await writeText(path.join(uploadPath(uploadId), 'meta.json'), JSON.stringify({
+        requestedPathname,
+        pathname,
+        key,
+        presigned: isPresigned,
+        headers: headersToObject(headers),
+      }, null, 2));
 
       return Response.json({ key, uploadId });
     }
 
     if (action === 'upload') {
+      const requestedPathname = pathnameFromRequest(url);
+      if (isPresignedUrlRequest(url)) {
+        ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      }
       const uploadId = requireHeader(request, 'x-mpu-upload-id');
       const partNumber = Number(requireHeader(request, 'x-mpu-part-number'));
       const blob = await request.blob();
@@ -54,13 +73,18 @@ export default defineHandler({
     }
 
     if (action === 'complete') {
+      const requestedPathname = pathnameFromRequest(url);
+      if (isPresignedUrlRequest(url)) {
+        ctx.presign = verifyPresignedRequest(url, 'put', { pathname: requestedPathname });
+      }
       const uploadId = requireHeader(request, 'x-mpu-upload-id');
       const uploadMetadata = await readJsonFile(path.join(uploadPath(uploadId), 'meta.json'));
       const pathname = uploadMetadata.pathname;
-      const ifMatchFailure = await validateIfMatch(pathname, request);
+      const headers = headersFromStoredOptions(uploadMetadata.headers, request.headers);
+      const ifMatchFailure = await validateIfMatchHeaders(pathname, headers);
       if (ifMatchFailure) return ifMatchFailure;
 
-      if (!request.headers.has('x-if-match') && request.headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(pathname))) {
+      if (!headers.has('x-if-match') && headers.get('x-allow-overwrite') !== '1' && await fileExists(storeMetaPath(pathname))) {
         return blobErrorResponse(
           412,
           'Blob already exists. Pass allowOverwrite: true to overwrite it.',
@@ -74,13 +98,16 @@ export default defineHandler({
         sortedParts.map((part) => fs.readFile(path.join(uploadPath(uploadId), `${part.partNumber}.part`)))
       );
       const blob = new Blob(partBlobs, {
-        type: request.headers.get('X-Content-Type') || 'application/octet-stream',
+        type: headers.get('X-Content-Type') || 'application/octet-stream',
       });
+      if (ctx.presign) {
+        assertPresignedPutConstraints(ctx.presign, url, blob, headers);
+      }
       const metadata = createBlobMetadata({
         origin: url.origin,
         pathname,
         blob,
-        headers: request.headers,
+        headers,
       });
 
       await persistBlob(pathname, blob, metadata);
@@ -88,6 +115,7 @@ export default defineHandler({
 
       const result = putResultFromMetadata(metadata);
       await notifyClientUploadCompleted(request, result);
+      await notifyPresignedUploadCompleted(url, result);
 
       return Response.json(result);
     }
@@ -107,4 +135,16 @@ function requireHeader(request: Request, name: string) {
   }
 
   return decodeURIComponent(value);
+}
+
+function headersToObject(headers: Headers) {
+  return Object.fromEntries(headers.entries());
+}
+
+function headersFromStoredOptions(storedHeaders: Record<string, string> | undefined, requestHeaders: Headers) {
+  const headers = new Headers(storedHeaders);
+  for (const [key, value] of requestHeaders.entries()) {
+    if (!headers.has(key)) headers.set(key, value);
+  }
+  return headers;
 }

@@ -9,10 +9,11 @@ const PATHNAME_SEPARATOR = /[/\\]+/;
 
 export default defineHandler({
   name: 'list',
-  test(url: URL, request: Request): boolean {
-    return request.method === 'GET' && url.pathname === '/' && !url.searchParams.has('url');
+  test(ctx): boolean {
+    return ctx.request.method === 'GET' && ctx.url.pathname === '/' && !ctx.url.searchParams.has('url');
   },
-  async handle(url: URL) {
+  async handle(ctx) {
+    const { url } = ctx;
     const prefix = normalizeListPrefix(url.searchParams.get('prefix'));
     const limit = parseLimit(url.searchParams.get('limit'));
     const offset = parseCursor(url.searchParams.get('cursor'));
