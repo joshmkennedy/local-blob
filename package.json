@@ -1,6 +1,6 @@
 {
   "name": "local-blobtastic",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Local development emulator for the Vercel Blob API.",
   "repository": {
     "type": "git",

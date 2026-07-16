@@ -1,5 +1,11 @@
 # local-blobtastic
 
+## 0.2.1
+
+### Patch Changes
+
+- 806cf56: Allow Chrome private-network preflights for client uploads to the local control plane.
+
 ## 0.2.0
 
 ### Minor Changes
