@@ -268,6 +268,8 @@ const blob = await uploadPresigned('avatar.txt', file, {
 
 For presigned uploads, callback token payloads are round-tripped through the signed URL query and delivered to the local callback route. In the local demo route, the callback payload includes the pathname, client payload, and multipart flag.
 
+Browser uploads from another local origin are supported. The emulator handles standard CORS preflights and opts in to Chrome private-network preflights when the browser sends `Access-Control-Request-Private-Network: true`.
+
 ## Compatibility matrix
 
 | Feature | Local status | Notes |

@@ -145,6 +145,38 @@ test('browser CORS preflight allows direct blob uploads and reads', async () => 
   assert.match(response.headers.get('access-control-expose-headers'), /\betag\b/);
 });
 
+test('browser CORS preflight allows client uploads to the local control plane', async () => {
+  const requestedHeaders = [
+    'authorization',
+    'content-type',
+    'x-api-blob-request-attempt',
+    'x-api-blob-request-id',
+    'x-api-version',
+    'x-content-length',
+    'x-content-type',
+    'x-vercel-blob-access',
+    'x-vercel-blob-store-id',
+  ].join(',');
+  const url = new URL(BASE_URL);
+  url.searchParams.set('pathname', 'profile-images/originals/browser-upload.png');
+
+  const response = await fetch(url, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://localhost:3000',
+      'access-control-request-method': 'PUT',
+      'access-control-request-headers': requestedHeaders,
+      'access-control-request-private-network': 'true',
+    },
+  });
+
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), '*');
+  assert.match(response.headers.get('access-control-allow-methods'), /\bPUT\b/);
+  assert.equal(response.headers.get('access-control-allow-headers'), requestedHeaders);
+  assert.equal(response.headers.get('access-control-allow-private-network'), 'true');
+});
+
 test('browser CORS headers are returned on object reads and errors', async () => {
   const uploaded = await put('sdk-cors-read.txt', 'cors body', {
     access: 'public',

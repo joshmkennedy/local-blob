@@ -158,12 +158,21 @@ function applyCorsHeaders(headers: Headers, request: Request | http.IncomingMess
       ? request.headers.get('access-control-request-headers') ?? undefined
       : request.headers['access-control-request-headers']
   );
+  const requestedPrivateNetwork = headerValue(
+    request instanceof Request
+      ? request.headers.get('access-control-request-private-network') ?? undefined
+      : request.headers['access-control-request-private-network']
+  );
 
   headers.set('Access-Control-Allow-Origin', '*');
   headers.set('Access-Control-Allow-Methods', CORS_ALLOW_METHODS);
   headers.set('Access-Control-Allow-Headers', requestedHeaders || CORS_DEFAULT_ALLOW_HEADERS);
   headers.set('Access-Control-Expose-Headers', CORS_EXPOSE_HEADERS);
   headers.set('Access-Control-Max-Age', '86400');
+
+  if (requestedPrivateNetwork === 'true') {
+    headers.set('Access-Control-Allow-Private-Network', 'true');
+  }
 }
 
 function parseCliOptions(args: string[]): CliOptions {
